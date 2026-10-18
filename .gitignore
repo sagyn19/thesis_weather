@@ -1,0 +1,30 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE/editor settings
+.vscode/
+.idea/
+.DS_Store
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Local data and trained model artifacts
+# Keep these ignored if they are generated or large files.
+data/
+models/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
