@@ -81,30 +81,94 @@ if uploaded_file is not None:
     st.write("### ✅ Data Accepted & Filtered")
     st.dataframe(df.tail(3))
 
-    # --- 6. PREDICTION TARGET ---
-    st.write("### ⏱️ Choose Prediction Target")
+        # --- 6. FORECAST SETTINGS ---
+    st.write("### ⏱️ Forecast Settings")
     available_times = df['Timestamp'].dt.strftime('%Y-%m-%d %H:%M').tolist()
-    selected_time_str = st.selectbox("Predict the weather 24h after:", available_times, index=len(available_times) - 1)
 
-    # --- 7. EXECUTE ---
-    if st.button(f"Predict {target_choice} 🚀"):
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_time_str = st.selectbox("Start Forecast From:", available_times, index=len(available_times) - 1)
+    with col2:
+        # Let the user choose how far into the future they want to predict
+        forecast_horizon = st.slider("Forecast Horizon (Hours):", min_value=1, max_value=24, value=12)
+
+    # --- 7. RECURSIVE FORECASTING ENGINE ---
+    if st.button(f"Predict {forecast_horizon} Hours Ahead 🚀"):
         selected_time = pd.to_datetime(selected_time_str)
-        sliced_df = df[df['Timestamp'] <= selected_time].copy()
-        sliced_df = sliced_df.set_index('Timestamp')
-
-        st.success(f"Processing data up to {selected_time_str}...")
-
-        # --- THE BACKEND ---
-        final_row = process_features(sliced_df)
-        if final_row.empty:
-            st.error(
-                "❌ Not enough historical data. The model needs at least 24 hours of prior weather data to calculate its features. Please select a later starting time.")
-            st.stop()
-
-        prediction = make_prediction(final_row, model_choice, target_choice)
-
-        target_time = selected_time + pd.Timedelta(hours=24)
-
-        # Set the correct unit symbol
+        
+        # 1. Isolate the historical seed data
+        historical_df = df[df['Timestamp'] <= selected_time].copy()
+        historical_df = historical_df.set_index('Timestamp')
+        
+        st.success(f"Processing data and predicting {forecast_horizon} hours into the future...")
+        
+        # Create a progress bar for the UI
+        progress_text = "Running recursive inference loop..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        # 2. Setup the loop variables
+        future_dates = []
+        predictions = []
+        working_df = historical_df.copy()
+        
+        # 3. The Recursive Loop
+        for step in range(forecast_horizon):
+            # A. Process features for the current timeline
+            final_row = process_features(working_df)
+            
+            if final_row.empty:
+                st.error("❌ Not enough historical data. The model needs at least 24 hours of prior weather data.")
+                st.stop()
+                
+            # B. Predict the very next hour
+            pred_val = make_prediction(final_row, model_choice, target_choice)
+            predictions.append(pred_val)
+            
+            # C. Calculate the timestamp for this new prediction
+            next_time = working_df.index.max() + pd.Timedelta(hours=1)
+            future_dates.append(next_time)
+            
+            # D. The "Springboard" Trick: Create a dummy row to feed back into the model
+            # We copy the last known raw weather conditions, but overwrite the target variable with our new prediction!
+            new_row = working_df.iloc[-1].copy()
+            new_row.name = next_time
+            
+            if target_choice == "Temperature":
+                new_row['CH1Temp (degC)'] = pred_val
+                new_row['CH3Temp (degC)'] = pred_val
+            else:
+                new_row['Baro (mBar/hPa)'] = pred_val
+                
+            # Append new hybrid row back into our working dataframe for the next loop iteration
+            working_df.loc[next_time] = new_row
+            
+            # Update UI progress
+            my_bar.progress((step + 1) / forecast_horizon, text=f"Predicted Hour {step+1} of {forecast_horizon}...")
+            
+        my_bar.empty() # Clear the progress bar when done
+        
+        # --- 8. VISUALIZATION ---
+        st.write("### 📈 Forecast Results")
+        
+        # Determine which raw column to pull actuals from for the chart
+        raw_col = 'CH1Temp (degC)' if target_choice == "Temperature" else 'Baro (mBar/hPa)'
+        
+        # Get the last 48 hours of actual historical data to anchor the graph
+        actuals = historical_df[[raw_col]].resample('1h').mean().tail(48)
+        actuals.columns = ['Actual Historical']
+        
+        # Create a dataframe for the future predictions
+        forecast_df = pd.DataFrame({'Model Forecast': predictions}, index=future_dates)
+        
+        # Combine them so they plot on the same graph seamlessly
+        chart_df = pd.concat([actuals, forecast_df])
+        
+        # Render the chart in Streamlit
+        st.line_chart(chart_df)
+        
+        # Output the final target metric
+        target_time = future_dates[-1]
         unit = "°C" if target_choice == "Temperature" else "hPa"
-        st.metric(label=f"{target_choice} Forecast for {target_time.strftime('%Y-%m-%d %H:%M')}", value=f"{prediction:.2f} {unit}")
+        st.metric(label=f"Final Forecasted {target_choice} at {target_time.strftime('%Y-%m-%d %H:%M')}", value=f"{predictions[-1]:.2f} {unit}")
+else:
+    st.info("Please upload a CSV file to begin forecasting.")
